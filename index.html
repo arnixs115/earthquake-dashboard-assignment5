@@ -482,8 +482,19 @@
     font-size: 10.5px;
     color: var(--text-faint);
   }
-  .tick-row span{ min-width: 24px; text-align:center; }
-  .tick-row span.active{ color: var(--accent); font-weight:600; }
+  .tick-row button{
+    min-width: 24px;
+    text-align:center;
+    font: inherit;
+    color: inherit;
+    background: transparent;
+    border: 1px solid var(--border-soft);
+    border-radius: 3px;
+    padding: 3px 6px;
+    cursor: pointer;
+  }
+  .tick-row button:hover{ color: var(--text); border-color: var(--border); }
+  .tick-row button.active{ color: var(--accent); font-weight:600; border-color: var(--accent-dim); background: rgba(73,214,200,0.08); }
 
   /* ---------- Responsive ---------- */
   @media (max-width: 860px){
@@ -994,20 +1005,48 @@
   function renderTicks(){
     el.tickRow.innerHTML = '';
     var days = [];
+    var firstIndexOfDay = {};
     for (var i = 0; i < state.buckets.length; i++){
       var dk = state.buckets[i].dayKey;
-      if (days.indexOf(dk) === -1) days.push(dk);
+      if (days.indexOf(dk) === -1){
+        days.push(dk);
+        firstIndexOfDay[dk] = i;
+      }
     }
     var selectedDayKey = state.buckets[state.selectedBucketIndex]
       ? state.buckets[state.selectedBucketIndex].dayKey : null;
 
     for (var d = 0; d < days.length; d++){
-      var span = document.createElement('span');
+      var btn = document.createElement('button');
+      btn.type = 'button';
       var mmdd = days[d].slice(5).replace('-', '/');
-      span.textContent = (days[d] === state.todayKey) ? '오늘' : mmdd;
-      if (days[d] === selectedDayKey) span.className = 'active';
-      el.tickRow.appendChild(span);
+      btn.textContent = (days[d] === state.todayKey) ? '오늘' : mmdd;
+      btn.setAttribute('data-first-index', String(firstIndexOfDay[days[d]]));
+      btn.setAttribute('aria-pressed', days[d] === selectedDayKey ? 'true' : 'false');
+      if (days[d] === selectedDayKey) btn.className = 'active';
+      el.tickRow.appendChild(btn);
     }
+  }
+
+  // Date quick filter: jump to the chosen day while keeping the current
+  // 3-hour slot-of-day, reusing the existing bucket/filter pipeline.
+  // If that slot hasn't happened yet (today, later hours), fall back to
+  // the bucket that contains "now".
+  function selectDayByFirstIndex(firstIndex){
+    var slot = state.selectedBucketIndex % BUCKETS_PER_DAY;
+    var target = firstIndex + slot;
+    if (target >= state.buckets.length) target = state.buckets.length - 1;
+    if (state.buckets[target] && state.buckets[target].start > state.fetchedAt){
+      target = currentBucketIndex(state.buckets, state.fetchedAt);
+    }
+    selectBucketIndex(target);
+  }
+
+  function selectBucketIndex(index){
+    state.selectedBucketIndex = index;
+    el.slider.value = String(index);
+    state.selectedId = null; // clear selection when the visible set changes
+    applyBucketFilter();
   }
 
   function updateRangeLabel(){
@@ -1485,9 +1524,13 @@
   // Wire up slider
   // ============================================================
   el.slider.addEventListener('input', function(){
-    state.selectedBucketIndex = parseInt(el.slider.value, 10);
-    state.selectedId = null; // clear selection when the visible set changes
-    applyBucketFilter();
+    selectBucketIndex(parseInt(el.slider.value, 10));
+  });
+
+  el.tickRow.addEventListener('click', function(evt){
+    var btn = evt.target.closest ? evt.target.closest('button[data-first-index]') : null;
+    if (!btn || state.buckets.length === 0) return;
+    selectDayByFirstIndex(parseInt(btn.getAttribute('data-first-index'), 10));
   });
 
   el.overlayRetry.addEventListener('click', function(){
