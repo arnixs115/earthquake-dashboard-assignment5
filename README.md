@@ -9,6 +9,7 @@ USGS 공개 지진 데이터를 3D 지구본으로 시각화하는 실시간 대
 - **시간 슬라이더**: 7일 × 3시간 단위(56구간)로 필터링, KST 날짜 경계 기준
 - **Daily Record**: 날짜별(KST) 지진 발생 건수 집계, 오늘/어제 비교 및 변화율
 - **TEST 패널**: Slow / 401 / 403 / Rate Limit / Offline / Schema Change synthetic fixture로 오류 상태 테스트
+- **API Timeout**: USGS 요청이 3초 안에 응답하지 않으면 `TIMEOUT` 오류로 처리하고 다시 시도할 수 있습니다 (`Slow` fixture는 4.5초 지연이라 timeout을 재현합니다)
 
 ## 데이터 출처
 

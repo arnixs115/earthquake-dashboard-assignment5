@@ -620,6 +620,9 @@
   // Config
   // ============================================================
   var USGS_URL = "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/2.5_week.geojson";
+  // API request timeout. Must stay below the "Slow" fixture delay (4500ms)
+  // so that fixture reproduces a timeout instead of succeeding first.
+  var REQUEST_TIMEOUT_MS = 3000;
   var GLOBE_RADIUS = 2;
   var BUCKET_HOURS = 3;
   var BUCKETS_PER_DAY = 8;   // 24h / 3h
@@ -1140,6 +1143,7 @@
     AUTH:       { label: '401/403',    text: 'API 접근 권한이 없습니다 (401/403).\n인증 상태를 확인해주세요.' },
     RATE_LIMIT: { label: 'RATE LIMIT', text: '요청이 너무 많습니다 (429 Rate Limit).\n잠시 후 다시 시도해주세요.' },
     SCHEMA:     { label: 'SCHEMA',     text: 'API 응답 형식이 예상과 다릅니다 (Schema Change).\n데이터 구조가 변경되었을 수 있습니다.' },
+    TIMEOUT:    { label: 'TIMEOUT',    text: '요청 시간이 초과되었습니다 (' + (REQUEST_TIMEOUT_MS / 1000) + '초 이상 응답 없음).\n잠시 후 다시 시도해주세요.' },
     UNKNOWN:    { label: 'ERROR',      text: '지진 데이터를 불러오지 못했습니다.\n잠시 후 다시 시도해주세요.' }
   };
 
@@ -1449,7 +1453,10 @@
   // ============================================================
   // Data fetch
   // ============================================================
+  var requestSeq = 0; // lets a newer request ignore results/timeouts of older ones
+
   function fetchData(){
+    var seq = ++requestSeq;
     var isRefresh = state.allFeatures.length > 0; // had good data already?
     state.loading = true;
     state.error = null;
@@ -1461,9 +1468,20 @@
     var fixtureId = state.activeFixture;
     var simulated = fixtureId !== 'normal' ? simulatedRequest(fixtureId) : null;
 
+    // Timeout applies to real fetch() and simulated fixtures alike, so the
+    // "Slow" fixture exercises the same code path as a real hung request.
+    var controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+    var timerId = null;
+    var timeoutPromise = new Promise(function(_, reject){
+      timerId = setTimeout(function(){
+        reject({ type: 'TIMEOUT' });
+        if (controller) controller.abort(); // actually cancel the real network request
+      }, REQUEST_TIMEOUT_MS);
+    });
+
     var requestPromise = simulated
       ? simulated
-      : fetch(USGS_URL).then(function(res){
+      : fetch(USGS_URL, controller ? { signal: controller.signal } : undefined).then(function(res){
           if (!res.ok){
             var type = (res.status === 401 || res.status === 403) ? 'AUTH'
               : (res.status === 429) ? 'RATE_LIMIT' : 'UNKNOWN';
@@ -1472,9 +1490,11 @@
           return res.json();
         });
 
-    requestPromise
+    Promise.race([requestPromise, timeoutPromise])
       .then(validateUSGSResponse)
       .then(function(data){
+        clearTimeout(timerId);
+        if (seq !== requestSeq) return; // superseded by a newer request
         var features = data.features;
         var metadata = data.metadata;
         state.allFeatures = features;
@@ -1505,6 +1525,8 @@
         renderDailyRecord(dr.records, dr.todayKey);
       })
       .catch(function(err){
+        clearTimeout(timerId);
+        if (seq !== requestSeq) return; // superseded by a newer request
         state.loading = false;
         state.error = err;
         var type = classifyError(err);
